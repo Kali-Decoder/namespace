@@ -1,0 +1,9 @@
+node_modules
+.vscode
+cache
+artifacts
+.env
+.DS_Store
+typechain-types
+.env
+ignition/deployments
