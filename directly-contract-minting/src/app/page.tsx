@@ -9,7 +9,7 @@ import {
 } from "@/utils/namespace";
 import axios from "axios";
 import { Abis } from "@/constant/abi";
-import { getL1NamespaceContracts } from "@/constant/index";
+import { getEnsContracts, getL1NamespaceContracts } from "@/constant/index";
 import { Address, Hash, namehash, toHex, zeroAddress } from "viem";
 import {
   useAccount,
@@ -61,7 +61,7 @@ const getMintParameters = async (
 };
 
 
-export function useMint() {
+function useMint() {
   const publicClient = usePublicClient({ chainId: sepolia.id });
   const { data: walletClient } = useWalletClient({ chainId: sepolia.id });
 
@@ -91,25 +91,64 @@ export function useMint() {
   return { mint };
 }
 
+function useL1SubnameAvailability() {
+  const publicClient = usePublicClient({ chainId: sepolia.id });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
+  const checkAvailability = useCallback(
+    async (subnameLabel: string, ensName: string) => {
+      if (!publicClient) return false;
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const fullName = `${subnameLabel}.${ensName}`;
+        const subnameOwner = await publicClient.readContract({
+          abi: Abis.ENS_REGISTRY,
+          functionName: "owner",
+          address: getEnsContracts(true).ensRegistry,
+          args: [namehash(fullName)],
+        });
+
+        console.log(subnameOwner,"address");
+
+        const available = subnameOwner === zeroAddress;
+        setIsAvailable(available);
+        return available;
+      } catch (err: any) {
+        setError(err);
+        setIsAvailable(null);
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [publicClient]
+  );
+  return { checkAvailability, loading, error, isAvailable };
+}
 
 export default function Home() {
   const [search, setSearch] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
   const { address, isConnected, chain } = useAccount();
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { mint } = useMint();
+  const { checkAvailability, loading: checkAvailableLoading, isAvailable, error } = useL1SubnameAvailability();
+
 
   // 🔍 Search handler
   const handleSearch = async () => {
     if (!search.trim()) return;
-    setLoading(true);
     setErrorMsg(null);
 
     try {
       const isAvailable = await checkAvailability(search, MY_ENS_NAME);
+      console.log(isAvailable, "trueornot");
       const suggestionList = [
         `${search}.${MY_ENS_NAME}`,
         `${search}123.${MY_ENS_NAME}`,
@@ -125,8 +164,6 @@ export default function Home() {
       setSuggestions([]);
       setErrorMsg("Something went wrong while checking availability.");
     }
-
-    setLoading(false);
   };
 
   // 🪙 Mint handler
@@ -152,34 +189,34 @@ export default function Home() {
       };
 
       // 🔹 Step 2: Use response params for signature generation
-    
+
       const paramResponse = await getMintParameters(mintParamsRequest);
       console.log("Mint parameters:", paramResponse);
 
       const params = {
-      abi: Abis.L1_MINT_CONTROLLER,
-      args: [
-        paramResponse.content,
-        paramResponse.signature,
-        [],
-        toHex("namespace-sdk"),
-      ],
-      functionName: "mint",
-      contractAddress: getL1NamespaceContracts(true).mintController,
-      account: address as `0x${string}`,
-      value:
-        BigInt(paramResponse.content.fee) + BigInt(paramResponse.content.price),
-    }
+        abi: Abis.L1_MINT_CONTROLLER,
+        args: [
+          paramResponse.content,
+          paramResponse.signature,
+          [],
+          toHex("namespace-sdk"),
+        ],
+        functionName: "mint",
+        contractAddress: getL1NamespaceContracts(true).mintController,
+        account: address as `0x${string}`,
+        value:
+          BigInt(paramResponse.content.fee) + BigInt(paramResponse.content.price),
+      }
 
       // 🔹 Step 3: Call mint with API response values
       const tx = await mint(params);
       setTxHash(tx);
 
-      const mintDetails = await getMintDetails(
-        address as `0x${string}`,
-        subnameLabel
-      );
-      console.log("Mint details:", mintDetails);
+      // const mintDetails = await getMintDetails(
+      //   address as `0x${string}`,
+      //   subnameLabel
+      // );
+      // console.log("Mint details:", mintDetails);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "Mint failed. Please try again.");
@@ -187,81 +224,96 @@ export default function Home() {
   };
 
   return (
-    <div className="font-sans flex flex-col items-center min-h-screen p-8 gap-8 bg-gradient-to-b from-gray-950 to-black text-white">
+    <div className="font-sans flex flex-col items-center min-h-screen px-6 py-10 gap-8 bg-gradient-to-b from-gray-950 via-gray-900 to-black text-white">
       {/* Wallet Connect */}
-      <ConnectButton />
+      <div className="self-end">
+        <ConnectButton />
+      </div>
 
       {/* Title */}
-      <h1 className="text-3xl font-bold text-center">
-        ENS Subname Minting under{" "}
-        <span className="text-blue-500">{MY_ENS_NAME}</span>
-      </h1>
+      <div className="text-center space-y-2">
+        <h1 className="text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+          Mint Your ENS Subname
+        </h1>
+        <p className="text-gray-400">
+          under <span className="text-blue-400">{MY_ENS_NAME}</span>
+        </p>
+      </div>
 
       {/* Search Box */}
-      <div className="flex gap-3 w-full max-w-md">
+      <div className="flex gap-3 w-full max-w-lg">
         <input
           type="text"
           placeholder="Search ENS subname..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 px-4 py-3 rounded-xl border border-gray-700 bg-gray-900 text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 px-4 py-3 rounded-xl border border-gray-700 bg-gray-900/60 text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         />
         <button
           onClick={handleSearch}
-          disabled={loading}
-          className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-all font-medium"
+          disabled={checkAvailableLoading}
+          className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 transition-all font-semibold shadow-lg shadow-blue-900/30"
         >
-          {loading ? "Searching..." : "Search"}
+          {checkAvailableLoading ? (
+            <span className="animate-pulse">Searching...</span>
+          ) : (
+            "Search"
+          )}
         </button>
       </div>
 
       {/* Error Msg */}
       {errorMsg && (
-        <div className="w-full max-w-md p-4 rounded-lg bg-red-500/20 border border-red-500 text-red-400 text-sm">
+        <div className="w-full max-w-md p-4 rounded-lg bg-red-500/20 border border-red-500 text-red-400 text-sm text-center">
           ⚠️ {errorMsg}
         </div>
       )}
 
       {/* Suggestions */}
       {suggestions.length > 0 && (
-        <div className="w-full max-w-md space-y-3">
-          {suggestions.map((name) => (
-            <div
-              key={name}
-              className="flex justify-between items-center p-4 rounded-xl bg-gray-900 border border-gray-700 hover:border-blue-500 transition-all"
-            >
-              <span className="font-medium">
-                {name.includes("taken") ? (
-                  <span className="text-gray-500">{name}</span>
-                ) : (
-                  name
-                )}
-              </span>
-
-              {!name.includes("taken") ? (
-                <button
-                  onClick={() => handleMint(name)}
-                  className="px-4 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 transition-all text-sm font-medium"
+        <div className="w-full max-w-lg space-y-4 mt-4">
+          {suggestions.map((name) => {
+            const taken = name.includes("taken");
+            return (
+              <div
+                key={name}
+                className={`flex justify-between items-center p-5 rounded-xl border ${taken
+                    ? "border-gray-700 bg-gray-800/50"
+                    : "border-gray-700 hover:border-blue-500 bg-gray-900/50"
+                  } transition-all shadow-md`}
+              >
+                <span
+                  className={`font-medium ${taken ? "text-gray-500" : "text-gray-200"
+                    }`}
                 >
-                  Mint
-                </button>
-              ) : (
-                <span className="text-red-400 text-sm">Unavailable</span>
-              )}
-            </div>
-          ))}
+                  {name}
+                </span>
+
+                {!taken ? (
+                  <button
+                    onClick={() => handleMint(name)}
+                    className="px-5 py-2 rounded-lg bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-700 hover:to-emerald-600 transition-all text-sm font-semibold text-white shadow-lg shadow-green-900/30"
+                  >
+                    Mint 🚀
+                  </button>
+                ) : (
+                  <span className="text-red-400 text-sm font-medium">Unavailable</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
       {/* Tx Feedback */}
       {txHash && (
-        <div className="w-full max-w-md p-4 rounded-lg bg-green-500/20 border border-green-500 text-green-400 text-sm">
+        <div className="w-full max-w-lg p-5 rounded-lg bg-green-500/20 border border-green-500 text-green-400 text-sm text-center mt-6 shadow-lg">
           ✅ Mint successful!{" "}
           <a
             href={`https://sepolia.etherscan.io/tx/${txHash}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="underline ml-1 hover:text-green-300"
+            className="underline ml-1 hover:text-green-300 font-semibold"
           >
             View on Etherscan
           </a>
